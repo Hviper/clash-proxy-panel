@@ -272,6 +272,7 @@ test('REST API 全流程', async (t) => {
       proxy: 'Sakura | US 1',
       url: 'https://generativelanguage.googleapis.com',
       delay: 88,
+      provider: null,
     });
 
     const call = mihomo.calls.proxyDelay.at(-1);
@@ -293,6 +294,39 @@ test('REST API 全流程', async (t) => {
 
     const badUrl = await api('POST', `/api/proxies/${node}/delay?url=ftp%3A%2F%2Fexample.com`);
     assert.equal(badUrl.status, 400);
+  });
+
+  await t.test('单节点测速走 provider 作用域端点', async () => {
+    // 订阅节点不在 Mihomo 的 /proxies 顶层，必须带 provider 才能测速。
+    const providerNode = 'Dasho |🇺🇸美国06-0.1倍 | 电信联通移动推荐';
+    const encoded = encodeURIComponent(providerNode);
+
+    const scoped = await api('POST', `/api/proxies/${encoded}/delay`, {
+      url: 'https://example.com/ping',
+      timeout: 2500,
+      provider: 'p3',
+    });
+    assert.equal(scoped.status, 200);
+    assert.equal(scoped.data.success, true);
+    assert.equal(scoped.data.delay, 165);
+    assert.equal(scoped.data.provider, 'p3');
+    assert.deepEqual(mihomo.calls.providerProxyDelay.at(-1), {
+      provider: 'p3',
+      proxy: providerNode,
+      url: 'https://example.com/ping',
+      timeout: 2500,
+    });
+    // provider 命中后不应再打顶层端点。
+    assert.equal(mihomo.calls.proxyDelay.length, 2);
+
+    // provider 下找不到该节点时回退到顶层端点，覆盖活动配置中的直属节点。
+    const fallback = await api('POST', `/api/proxies/${encoded}/delay`, {
+      provider: 'p2',
+    });
+    assert.equal(fallback.status, 200);
+    assert.equal(fallback.data.delay, 88);
+    assert.equal(fallback.data.provider, null);
+    assert.equal(mihomo.calls.proxyDelay.length, 3);
   });
 
   await t.test('POST /api/groups/:name/select 切换活跃节点', async () => {

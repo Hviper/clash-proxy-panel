@@ -111,6 +111,13 @@ function fakeMihomo() {
     selectProxy: [],
     groupDelay: [],
     proxyDelay: [],
+    providerProxyDelay: [],
+  };
+
+  // 订阅 provider 的节点不在 /proxies 顶层，fake 用这份表模拟 provider 作用域查找。
+  const providerProxies = {
+    p2: ['Sakura |🇺🇸|美国-IEPL 01'],
+    p3: ['Dasho |🇺🇸美国06-0.1倍 | 电信联通移动推荐'],
   };
 
   return {
@@ -188,6 +195,16 @@ function fakeMihomo() {
     async testProxyDelay(proxy, url, timeout) {
       calls.proxyDelay.push({ proxy, url, timeout });
       return { delay: 88 };
+    },
+    async testProviderProxyDelay(provider, proxy, url, timeout) {
+      calls.providerProxyDelay.push({ provider, proxy, url, timeout });
+      const known = providerProxies[provider] || [];
+      if (!known.includes(proxy)) {
+        const error = new Error(`Mihomo GET /providers/proxies/${provider}/${proxy}/healthcheck 失败: HTTP 404 - Resource not found`);
+        error.status = 404;
+        throw error;
+      }
+      return { delay: 165 };
     },
   };
 }

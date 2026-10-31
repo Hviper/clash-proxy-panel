@@ -198,6 +198,24 @@ function createMihomoClient(options = {}) {
         Math.min(probeTimeout + 1000, 8000)
       );
     },
+
+    /**
+     * 对 provider 内的单个节点测速。
+     *
+     * 订阅 provider 的节点不会注册到 /proxies 顶层，只能通过
+     * /providers/proxies/{provider}/{name}/healthcheck 定位；
+     * 直接请求 /proxies/{name}/delay 会返回 404。
+     * Mihomo 返回形如 { delay: 123 } 的对象。
+     */
+    testProviderProxyDelay(providerName, proxyName, url = DEFAULT_DELAY_URL, timeout = DEFAULT_DELAY_TIMEOUT) {
+      const probeTimeout = Number(timeout) || DEFAULT_DELAY_TIMEOUT;
+      return request(
+        'GET',
+        `/providers/proxies/${encodeURIComponent(providerName)}/${encodeURIComponent(proxyName)}/healthcheck?${delayQuery(url, probeTimeout)}`,
+        undefined,
+        Math.min(probeTimeout + 1000, 8000)
+      );
+    },
   };
 }
 

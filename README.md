@@ -86,6 +86,7 @@ npm run build:dmg
 | GET | `/api/nodes` | provider 节点列表 |
 | GET/POST/DELETE | `/api/groups` | 代理组管理 |
 | POST | `/api/groups/:name/delay` | 代理组测速 |
+| POST | `/api/proxies/:name/delay` | 单节点测速（body 可选 `provider`） |
 | POST | `/api/groups/:name/select` | 切换组内节点 |
 | GET/POST/DELETE | `/api/listeners` | 监听器管理 |
 | GET | `/api/test-port?port=7891` | 检测端口 |
@@ -100,6 +101,17 @@ npm run build:dmg
 - 默认配置不含订阅 URL、token 或 Mihomo secret；Mihomo secret 只从本机 Clash Verge 配置读取，未配置时不发送 Authorization 头。
 - 回滚文件名限制为 `Script.js.bak-panel-*`，防止路径穿越。
 - 本地配置 `data/`、构建产物 `release/` 与日志均不入库；订阅 URL 只保存在你自己的机器上。
+
+## 排查
+
+### 单节点测速报「Mihomo 中不存在节点」
+
+订阅 provider 的节点不会注册到 Mihomo 的 `/proxies` 顶层，因此直接请求
+`/proxies/{name}/delay` 会返回 404。面板会带上节点所属的 provider，改用
+`/providers/proxies/{provider}/{name}/healthcheck` 定位。
+
+若该提示依旧出现，通常是订阅尚未在 Mihomo 中加载：先在「订阅源」里刷新对应订阅，
+再在 Clash Verge 中重新生成一次运行时配置。
 
 ## License
 

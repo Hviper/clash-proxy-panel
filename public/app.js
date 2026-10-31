@@ -283,6 +283,18 @@ createApp({
       return getMatchedNodes(group, 0).length;
     };
 
+    /**
+     * 解析节点所属的订阅 provider id。
+     *
+     * 订阅节点在 Mihomo 中不注册到 /proxies 顶层，单节点测速必须带上
+     * provider 才能命中 /providers/proxies/{provider}/{name}/healthcheck。
+     * 运行时组名（group.all）里的活动配置节点没有 provider，返回 null。
+     */
+    const lookupNodeProvider = (nodeName) => {
+      const node = nodeByName.value.get(nodeName);
+      return node && node.provider ? node.provider : null;
+    };
+
     const toggleGroupExpand = (name) => {
       expandedGroups.value[name] = !expandedGroups.value[name];
     };
@@ -728,11 +740,12 @@ createApp({
 
       const url = getGroupTestUrl(groupName);
       const timeout = getGroupTimeout(groupName);
+      const provider = lookupNodeProvider(nodeName);
 
       try {
         const res = await apiFetch(`/api/proxies/${encodeURIComponent(nodeName)}/delay`, {
           method: 'POST',
-          body: { url, timeout }
+          body: provider ? { url, timeout, provider } : { url, timeout }
         }).then(r => r.json());
 
         if (res && res.success && typeof res.delay === 'number') {
@@ -817,6 +830,7 @@ createApp({
       if (groupTesting.value[group.name] && frozenGroupNodes.value[group.name]) {
         list = frozenGroupNodes.value[group.name].map(name => ({
           name,
+          provider: lookupNodeProvider(name),
           delay: getNodeDelay(group.name, name)
         }));
         return isExpanded ? list : list.slice(0, 9);
@@ -825,11 +839,13 @@ createApp({
       if (Array.isArray(group.all) && group.all.length > 0) {
         list = group.all.map(name => ({
           name,
+          provider: lookupNodeProvider(name),
           delay: getNodeDelay(group.name, name)
         }));
       } else {
         list = getMatchedNodes(group, 0).map(n => ({
           name: n.name,
+          provider: n.provider,
           delay: getNodeDelay(group.name, n.name)
         }));
       }

@@ -23,8 +23,8 @@ function renderer() {
     window: {
       desktop: {
         platform: 'darwin',
-        request(url) {
-          return new Promise((resolve, reject) => requests.push({ url, resolve, reject }));
+        request(url, options) {
+          return new Promise((resolve, reject) => requests.push({ url, options, resolve, reject }));
         },
       },
       lucide: { createIcons() { icons += 1; } },
@@ -105,4 +105,43 @@ test('后台刷新失败保留已有数据，不把故障伪装成空列表', as
   assert.equal(app.state.listeners.value[0]?.name, 'existing-port');
   assert.equal(app.state.nodes.value[0]?.name, 'node-a');
   assert.equal(app.state.loading.value, false);
+});
+
+test('单节点测速带上所属 provider，订阅节点不再 404', async () => {
+  const app = renderer();
+  const nodeName = 'Dasho |🇺🇸美国06-0.1倍 | 电信联通移动推荐';
+  app.state.groups.value = [{ name: 'AGY Gemini', all: [nodeName], type: 'select' }];
+  app.state.nodes.value = [{ name: nodeName, delay: 165, provider: 'p3' }];
+
+  const running = app.state.runSingleNodeDelayTest('AGY Gemini', nodeName);
+  await reachRequest(app);
+
+  const sent = app.requests[0];
+  assert.match(sent.url, /\/api\/proxies\/.+\/delay$/);
+  // 关键断言：provider 随请求体一起发出，后端才能命中 provider 作用域端点。
+  const body = JSON.parse(sent.options.body);
+  assert.equal(body.provider, 'p3');
+
+  sent.resolve({ ok: true, status: 200, data: { success: true, delay: 165, provider: 'p3' } });
+  await running;
+  await vue.nextTick();
+  assert.equal(app.state.getNodeDelay('AGY Gemini', nodeName), 165);
+  assert.equal(app.state.toasts.value.length, 0);
+});
+
+test('活动配置节点没有 provider 时不发送该字段', async () => {
+  const app = renderer();
+  const nodeName = '🇺🇸美国-X(通用)';
+  app.state.groups.value = [{ name: 'AGY Gemini', all: [nodeName], type: 'select' }];
+  app.state.nodes.value = [{ name: nodeName, delay: 220 }];
+
+  const running = app.state.runSingleNodeDelayTest('AGY Gemini', nodeName);
+  await reachRequest(app);
+
+  const body = JSON.parse(app.requests[0].options.body);
+  assert.equal(body.provider, undefined);
+
+  app.requests[0].resolve({ ok: true, status: 200, data: { success: true, delay: 220, provider: null } });
+  await running;
+  assert.equal(app.state.getNodeDelay('AGY Gemini', nodeName), 220);
 });

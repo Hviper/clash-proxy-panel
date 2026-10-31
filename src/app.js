@@ -524,21 +524,46 @@ function createApp(options = {}) {
     asyncHandler(async (req, res) => {
       const proxy = req.params.name;
       const { url, timeout } = resolveDelayOptions(req);
+      const body = req.body || {};
+      const provider =
+        typeof body.provider === 'string' && body.provider.trim()
+          ? body.provider.trim()
+          : typeof req.query.provider === 'string' && req.query.provider.trim()
+            ? req.query.provider.trim()
+            : null;
 
       let data;
-      try {
-        data = await mihomo.testProxyDelay(proxy, url, timeout);
-      } catch (err) {
-        if (err.status === 404) {
-          throw new HttpError(404, `Mihomo 中不存在节点: ${proxy}`);
+      let usedProvider = null;
+
+      if (provider && typeof mihomo.testProviderProxyDelay === 'function') {
+        // 订阅 provider 的节点不在 /proxies 顶层，必须走 provider 作用域端点。
+        try {
+          data = await mihomo.testProviderProxyDelay(provider, proxy, url, timeout);
+          usedProvider = provider;
+        } catch (err) {
+          if (err.status !== 404) throw err;
+          // provider 下找不到时回退到顶层端点，覆盖活动配置中的直属节点。
         }
-        throw err;
+      }
+
+      if (!usedProvider) {
+        try {
+          data = await mihomo.testProxyDelay(proxy, url, timeout);
+        } catch (err) {
+          if (err.status === 404) {
+            throw new HttpError(
+              404,
+              `Mihomo 中不存在节点: ${proxy}（该节点可能来自订阅但尚未加载，请先刷新订阅或在 Verge 中重新生成配置）`
+            );
+          }
+          throw err;
+        }
       }
 
       const delay =
         data && typeof data.delay === 'number' ? data.delay : null;
 
-      res.json({ success: true, proxy, url, delay });
+      res.json({ success: true, proxy, url, delay, provider: usedProvider });
     })
   );
 
