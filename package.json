@@ -2,7 +2,14 @@
   "name": "clash-proxy-panel",
   "version": "1.0.0",
   "description": "Clash Verge / Mihomo 本地代理配置桌面面板",
+  "author": "Hviper",
+  "homepage": "https://github.com/Hviper/clash-proxy-panel",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Hviper/clash-proxy-panel.git"
+  },
   "main": "electron/main.js",
+  "license": "MIT",
   "scripts": {
     "start": "electron .",
     "start:web": "node server.js",
@@ -11,8 +18,15 @@
     "build:mac": "npm run build:assets && electron-builder --mac --arm64 --dir --config.electronDist=node_modules/electron/dist",
     "build:dmg": "npm run build:assets && electron-builder --mac dmg --arm64 --config.electronDist=node_modules/electron/dist"
   },
-  "keywords": ["clash", "mihomo", "proxy", "panel"],
-  "license": "MIT",
+  "keywords": [
+    "clash",
+    "mihomo",
+    "clash-verge",
+    "proxy",
+    "electron",
+    "panel",
+    "desktop"
+  ],
   "dependencies": {
     "cors": "^2.8.5",
     "express": "^4.21.2",
@@ -28,7 +42,9 @@
     "appId": "com.agy.clash-proxy-panel",
     "productName": "Clash Proxy Panel",
     "asar": true,
-    "directories": { "output": "release" },
+    "directories": {
+      "output": "release"
+    },
     "files": [
       "electron/**/*",
       "src/**/*",
@@ -44,7 +60,9 @@
       "!start.sh"
     ],
     "mac": {
-      "target": ["dir"],
+      "target": [
+        "dir"
+      ],
       "category": "public.app-category.utilities",
       "identity": null
     }
