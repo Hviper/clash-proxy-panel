@@ -1,0 +1,778 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ProxyPort Mesh - Clash 代理组与专属端口编排中心</title>
+  
+  <!-- 本地 Vendor 样式与依赖 (移除外部 CDN) -->
+  <link rel="stylesheet" href="/vendor/tailwind.css">
+  <script src="/vendor/vue.global.prod.js"></script>
+  <script src="/vendor/lucide.js"></script>
+
+  <style>
+    [v-cloak] { display: none; }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #0f172a; }
+    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #475569; }
+  </style>
+</head>
+<body class="bg-dark-900 text-slate-100 font-sans min-h-screen antialiased selection:bg-brand-500 selection:text-white">
+  <div id="app" v-cloak class="flex flex-col min-h-screen">
+    
+    <!-- Toast Notifications -->
+    <div class="fixed top-4 right-4 z-50 flex flex-col gap-2 max-w-md w-full pointer-events-none">
+      <div v-for="toast in toasts" :key="toast.id" 
+           :class="['pointer-events-auto flex items-start gap-3 p-3.5 rounded-xl border shadow-2xl backdrop-blur-md transition-all duration-300 transform translate-y-0',
+                    toast.type === 'success' ? 'bg-emerald-950/90 border-emerald-500/50 text-emerald-200' : 
+                    toast.type === 'error' ? 'bg-rose-950/90 border-rose-500/50 text-rose-200' : 
+                    toast.type === 'warning' ? 'bg-amber-950/90 border-amber-500/50 text-amber-200' :
+                    'bg-slate-900/90 border-slate-700 text-slate-200']">
+        <i :data-lucide="toast.type === 'success' ? 'check-circle-2' : toast.type === 'error' ? 'alert-triangle' : toast.type === 'warning' ? 'alert-circle' : 'info'" 
+           class="w-5 h-5 mt-0.5 shrink-0"></i>
+        <div class="flex-1 text-xs sm:text-sm font-medium leading-relaxed">{{ toast.message }}</div>
+        <button @click="removeToast(toast.id)" class="text-slate-400 hover:text-white shrink-0 p-0.5">
+          <i data-lucide="x" class="w-4 h-4"></i>
+        </button>
+      </div>
+    </div>
+
+    <!-- Top Navigation Bar (Mac Desktop Friendly & Native Titlebar Compatible) -->
+    <header class="border-b border-dark-800 bg-dark-850/90 backdrop-blur sticky top-0 z-30 select-none">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-14 flex items-center justify-between">
+        
+        <!-- App Title & Platform Badge -->
+        <div class="flex items-center gap-3">
+          <div class="w-8 h-8 rounded-lg bg-gradient-to-tr from-brand-500 to-indigo-600 flex items-center justify-center shadow-md shadow-brand-500/20 shrink-0">
+            <i data-lucide="zap" class="w-4 h-4 text-white"></i>
+          </div>
+          <div>
+            <div class="font-bold text-sm tracking-tight flex items-center gap-2">
+              <span>ProxyPort Mesh</span>
+              <span v-if="isDesktop" class="text-[10px] font-semibold tracking-wider uppercase px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 flex items-center gap-1">
+                <span class="w-1.5 h-1.5 rounded-full bg-indigo-400"></span>
+                {{ desktopPlatform === 'darwin' ? 'macOS 桌面版' : '桌面客户端' }}
+              </span>
+              <span v-else class="text-[10px] font-semibold tracking-wider uppercase px-2 py-0.5 rounded bg-brand-500/10 text-brand-400 border border-brand-500/20">
+                Web 控制台
+              </span>
+            </div>
+            <div class="text-[11px] text-slate-400 hidden sm:block">本机代理组与独立端口编排中心 · 写入配置后需在 Verge 中重新生成配置生效</div>
+          </div>
+        </div>
+
+        <!-- Status Badges & Quick Actions -->
+        <div class="flex items-center gap-2.5">
+          <!-- Mihomo Core Status -->
+          <div class="hidden sm:flex items-center gap-2 px-2.5 py-1 rounded-lg bg-dark-800 border border-dark-700 text-xs">
+            <span class="relative flex h-2 w-2">
+              <span v-if="status.mihomoRunning" class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+              <span :class="status.mihomoRunning ? 'bg-emerald-500' : 'bg-rose-500'" class="relative inline-flex rounded-full h-2 w-2"></span>
+            </span>
+            <span class="text-slate-300 font-medium">{{ status.mihomoRunning ? 'Mihomo 运行中' : '内核未连接' }}</span>
+            <span v-if="status.coreVersion" class="text-slate-400 text-[11px]">v{{ status.coreVersion }}</span>
+          </div>
+
+          <!-- Active Profile Badge -->
+          <div v-if="status.activeProfile" class="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-dark-800 border border-dark-700 text-xs text-slate-300">
+            <i data-lucide="file-text" class="w-3.5 h-3.5 text-brand-400"></i>
+            <span>活动配置:</span>
+            <span class="font-semibold text-white max-w-[120px] truncate" :title="status.activeProfile">{{ status.activeProfile }}</span>
+          </div>
+
+          <!-- Refresh Data -->
+          <button @click="loadAllData" :disabled="loading" 
+                  class="p-2 rounded-lg bg-dark-800 hover:bg-dark-700 border border-dark-700 text-slate-300 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  title="刷新数据状态">
+            <i data-lucide="refresh-cw" :class="['w-4 h-4', loading ? 'animate-spin text-brand-400' : '']"></i>
+          </button>
+
+          <!-- Apply Config Button -->
+          <button @click="applyConfig" :disabled="applying || configBusy"
+                  class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-brand-500 to-indigo-600 hover:from-brand-600 hover:to-indigo-700 text-white text-xs font-semibold shadow-md shadow-brand-500/20 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                  title="写入 Script.js 并刷新订阅（修改的代理组与端口需在 Verge 中重新生成配置后生效）">
+            <i data-lucide="save" :class="['w-3.5 h-3.5', applying ? 'animate-bounce' : '']"></i>
+            <span>{{ applying ? '正在写入 Script.js...' : '保存写入到 Script.js' }}</span>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Content Tabs -->
+    <main class="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-5 space-y-5">
+      
+      <!-- Tab Navigation -->
+      <div class="flex items-center justify-between border-b border-dark-800 pb-2.5">
+        <nav class="flex gap-1.5">
+          <button v-for="tab in tabs" :key="tab.id" @click="currentTab = tab.id"
+                  :class="['flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-medium transition-colors',
+                           currentTab === tab.id ? 'bg-dark-800 text-brand-400 border border-dark-700 shadow-sm' : 'text-slate-400 hover:text-slate-200 hover:bg-dark-850']">
+            <i :data-lucide="tab.icon" class="w-3.5 h-3.5"></i>
+            <span>{{ tab.name }}</span>
+            <span v-if="tab.count !== undefined" class="text-[10px] px-1.5 py-0.2 rounded-full bg-dark-700 text-slate-300">
+              {{ tab.count }}
+            </span>
+          </button>
+        </nav>
+      </div>
+
+      <!-- ========================================== -->
+      <!-- TAB 1: 独立端口路由映射 (LISTENERS) -->
+      <!-- ========================================== -->
+      <div v-show="currentTab === 'listeners'" class="space-y-4">
+        <div class="flex items-center justify-between">
+          <div>
+            <h2 class="text-base font-bold text-white">独立应用端口映射 (Inbound Listeners)</h2>
+            <p class="text-xs text-slate-400 mt-0.5">为 AGY、Codex、Cursor、自媒体脚本等应用分配独立端口，直连指定代理组，不受 7890 全局切换影响。</p>
+          </div>
+          <button @click="openListenerModal()" class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-brand-500/10 hover:bg-brand-500/20 text-brand-400 border border-brand-500/30 text-xs font-semibold transition-colors">
+            <i data-lucide="plus" class="w-3.5 h-3.5"></i>
+            <span>新建端口映射</span>
+          </button>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <!-- 默认 7890 端口卡片 (系统只读主入口) -->
+          <div class="rounded-xl border border-dark-700 bg-dark-850 p-4 space-y-3 relative overflow-hidden">
+            <div class="absolute top-0 right-0 w-24 h-24 bg-brand-500/5 rounded-full blur-2xl pointer-events-none"></div>
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <span class="text-2xl font-black text-brand-400">7890</span>
+                <span class="text-xs font-semibold px-2 py-0.5 rounded bg-dark-800 text-slate-300 border border-dark-700">混合端口</span>
+              </div>
+              <span class="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-400 px-2 py-0.5 rounded-full bg-emerald-950/60 border border-emerald-500/30">
+                <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span> 系统主入口
+              </span>
+            </div>
+            <div class="text-xs text-slate-400 space-y-1">
+              <div>目标：<span class="text-slate-200 font-medium">Clash Verge 全局规则分流</span></div>
+              <div>适用：日常浏览器、系统代理、TUN 流量模式</div>
+            </div>
+            <div class="pt-2 border-t border-dark-800 flex items-center justify-between text-xs text-slate-400">
+              <span class="font-mono">127.0.0.1:7890</span>
+              <button @click="copyText('127.0.0.1:7890')" class="hover:text-white flex items-center gap-1">
+                <i data-lucide="copy" class="w-3 h-3"></i> 复制
+              </button>
+            </div>
+          </div>
+
+          <!-- 自定义独立监听端口卡片 -->
+          <div v-for="l in listeners" :key="l.name" class="rounded-xl border border-dark-700 bg-dark-850 p-4 space-y-3 relative hover:border-dark-600 transition-colors">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <span class="text-2xl font-black text-white font-mono">{{ l.port }}</span>
+                <span class="text-xs font-semibold px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 uppercase">{{ l.type || 'mixed' }}</span>
+              </div>
+              <div class="flex items-center gap-1">
+                <button @click="openListenerModal(l)" :disabled="deletingListener[l.name]" class="p-1 text-slate-400 hover:text-white rounded disabled:opacity-50 disabled:cursor-not-allowed" title="编辑端口">
+                  <i data-lucide="edit-2" class="w-3.5 h-3.5"></i>
+                </button>
+                <button @click="deleteListener(l.name)" :disabled="deletingListener[l.name]" class="p-1 text-slate-400 hover:text-rose-400 rounded disabled:opacity-50 disabled:cursor-not-allowed" title="删除端口">
+                  <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                </button>
+              </div>
+            </div>
+
+            <div class="text-xs space-y-1.5">
+              <div class="flex items-center justify-between">
+                <span class="text-slate-400">映射名称:</span>
+                <span class="font-semibold text-slate-200">{{ l.name }}</span>
+              </div>
+              <div class="flex items-center justify-between">
+                <span class="text-slate-400">直连代理组:</span>
+                <span class="font-semibold text-brand-400 px-2 py-0.5 rounded bg-brand-500/10 border border-brand-500/20 max-w-[180px] truncate" :title="l.proxy">
+                  {{ l.proxy }}
+                </span>
+              </div>
+              <div class="flex items-center justify-between">
+                <span class="text-slate-400">UDP 支持:</span>
+                <span :class="l.udp ? 'text-emerald-400' : 'text-slate-400'">{{ l.udp ? '已启用' : '禁用' }}</span>
+              </div>
+            </div>
+
+            <div class="pt-2 border-t border-dark-800 flex items-center justify-between text-xs text-slate-400">
+              <span class="font-mono text-slate-300">127.0.0.1:{{ l.port }}</span>
+              <button @click="copyText(`http://127.0.0.1:${l.port}`)" class="hover:text-white flex items-center gap-1 text-brand-400">
+                <i data-lucide="copy" class="w-3 h-3"></i> 复制地址
+              </button>
+            </div>
+          </div>
+
+          <!-- 无自定义监听端口时的空状态引导卡片 -->
+          <div v-if="listeners.length === 0" class="rounded-xl border border-dashed border-dark-750 bg-dark-850/40 p-5 flex flex-col items-center justify-center text-center space-y-2">
+            <div class="w-9 h-9 rounded-lg bg-dark-800 flex items-center justify-center text-slate-400">
+              <i data-lucide="radio" class="w-4 h-4"></i>
+            </div>
+            <div class="text-xs font-semibold text-slate-300">暂无自定义独立端口映射</div>
+            <div class="text-[11px] text-slate-500 max-w-xs leading-relaxed">点击右上角「新建端口映射」，为特定应用分配独立专属端口直连指定代理组。</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ========================================== -->
+      <!-- TAB 2: 自定义代理组 (PROXY GROUPS) -->
+      <!-- ========================================== -->
+      <div v-show="currentTab === 'groups'" class="space-y-4">
+        <div class="flex items-center justify-between">
+          <div>
+            <h2 class="text-base font-bold text-white">自定义代理组与节点策略 (Proxy Groups)</h2>
+            <p class="text-xs text-slate-400 mt-0.5">跨订阅筛选汇聚节点，支持手动选择 (select)、测速选优 (url-test) 或故障转移 (fallback)。</p>
+          </div>
+          <button @click="openGroupModal()" class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-brand-500/10 hover:bg-brand-500/20 text-brand-400 border border-brand-500/30 text-xs font-semibold transition-colors">
+            <i data-lucide="plus" class="w-3.5 h-3.5"></i>
+            <span>新建代理组</span>
+          </button>
+        </div>
+
+        <!-- 无代理组时的空状态 -->
+        <div v-if="groups.length === 0 && !loading" class="rounded-xl border border-dashed border-dark-750 bg-dark-850/40 p-8 text-center space-y-2">
+          <div class="w-10 h-10 rounded-xl bg-dark-800 mx-auto flex items-center justify-center text-slate-400">
+            <i data-lucide="layers" class="w-5 h-5"></i>
+          </div>
+          <div class="text-sm font-bold text-slate-300">暂无自定义代理组</div>
+          <div class="text-xs text-slate-500 max-w-md mx-auto leading-relaxed">点击右上角「新建代理组」，跨订阅筛选节点并创建手动选择或自动测速优选策略。</div>
+        </div>
+
+        <div class="space-y-4">
+          <div v-for="g in groups" :key="g.name" class="rounded-xl border border-dark-700 bg-dark-850 p-4 sm:p-5 space-y-4">
+            
+            <!-- Group Header -->
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-dark-800 pb-3">
+              <div class="flex items-center gap-3">
+                <div class="w-9 h-9 rounded-lg bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400 shrink-0">
+                  <i data-lucide="layers" class="w-5 h-5"></i>
+                </div>
+                <div>
+                  <div class="flex flex-wrap items-center gap-2">
+                    <span class="font-bold text-base text-white">{{ g.name }}</span>
+                    <span class="text-xs px-2 py-0.5 rounded font-mono uppercase font-semibold bg-dark-800 text-slate-300 border border-dark-700">
+                      {{ g.type || 'select' }}
+                    </span>
+                    <span v-if="g.now" class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-brand-500/15 border border-brand-500/30 text-brand-300 font-mono text-xs font-semibold shadow-sm shadow-brand-500/10">
+                      <span class="w-1.5 h-1.5 rounded-full bg-brand-400 animate-pulse"></span>
+                      <span>当前活动出口:</span>
+                      <span class="text-white max-w-[220px] truncate" :title="g.now">{{ g.now }}</span>
+                    </span>
+                  </div>
+                  <div class="text-xs text-slate-400 flex items-center gap-2 mt-1">
+                    <span>来源订阅: {{ (g.use && g.use.length > 0) ? g.use.join(', ') : '无 (仅活动配置)' }}</span>
+                    <span v-if="g.includeActiveProfile" class="text-amber-400/90">(已勾选合并活动配置)</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="flex items-center gap-2">
+                <button @click="openGroupModal(g)" :disabled="deletingGroup[g.name]" class="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-dark-800 hover:bg-dark-700 text-slate-300 text-xs border border-dark-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                  <i data-lucide="edit-2" class="w-3.5 h-3.5"></i> 编辑策略
+                </button>
+                <button @click="deleteGroup(g.name)" :disabled="deletingGroup[g.name]" class="p-1.5 rounded-lg bg-dark-800 hover:bg-rose-950/50 text-slate-400 hover:text-rose-400 text-xs border border-dark-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed" title="删除代理组">
+                  <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                </button>
+              </div>
+            </div>
+
+            <!-- Group Filter & Node Count Summary -->
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs bg-dark-900/60 p-3 rounded-lg border border-dark-800">
+              <div>
+                <span class="text-slate-400">包含关键词/正则:</span>
+                <div class="font-mono text-emerald-400 truncate mt-0.5" :title="g.filter">{{ g.filter || '全部节点' }}</div>
+              </div>
+              <div>
+                <span class="text-slate-400">来源订阅池:</span>
+                <div class="font-mono text-slate-300 truncate mt-0.5" :title="(g.use && g.use.length > 0) ? g.use.join(', ') : '未选择订阅'">
+                  {{ (g.use && g.use.length > 0) ? g.use.join(', ') : '未选择' }}
+                </div>
+              </div>
+              <div>
+                <span class="text-slate-400">组内总节点数:</span>
+                <div class="font-semibold text-white mt-0.5 flex flex-wrap items-center gap-2">
+                  <span class="text-brand-400 font-mono text-sm">{{ (g.all && g.all.length) || getMatchedNodesCount(g) }}</span>
+                  <span>个可用节点</span>
+                  <span v-if="g.includeActiveProfile" class="text-[10px] text-amber-400/90 font-normal">
+                    (运行时由 Script.js 动态合并活动配置)
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Speed Test Control Bar -->
+            <div class="p-3.5 rounded-xl bg-dark-900/80 border border-dark-800 space-y-3">
+              <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div class="flex items-center gap-2">
+                  <i data-lucide="gauge" class="w-4 h-4 text-brand-400"></i>
+                  <span class="text-xs font-bold text-slate-200">自定义节点测速 (Speed Test)</span>
+                  <span class="text-[10px] text-slate-400">针对指定目标测速，优选最低延迟节点</span>
+                </div>
+                <!-- Presets Pill Buttons -->
+                <div class="flex flex-wrap items-center gap-1.5">
+                  <span class="text-[10px] text-slate-500 mr-1">快捷预设:</span>
+                  <button v-for="preset in urlPresets" :key="preset.url"
+                          @click="setGroupTestUrl(g.name, preset.url)"
+                          :disabled="groupTesting[g.name]"
+                          :class="['text-[11px] px-2 py-0.5 rounded-md border transition-all disabled:opacity-50 disabled:cursor-not-allowed',
+                                   getGroupTestUrl(g.name) === preset.url 
+                                     ? 'bg-brand-500/20 border-brand-500/50 text-brand-300 font-semibold' 
+                                     : 'bg-dark-800 hover:bg-dark-700 border-dark-700 text-slate-400']">
+                    {{ preset.label }}
+                  </button>
+                </div>
+              </div>
+
+              <!-- URL Input & Trigger Button -->
+              <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                <div class="relative flex-1">
+                  <i data-lucide="link" class="w-3.5 h-3.5 absolute left-3 top-2.5 text-slate-500"></i>
+                  <input :value="getGroupTestUrl(g.name)" 
+                         @input="setGroupTestUrl(g.name, $event.target.value)"
+                         :disabled="groupTesting[g.name]"
+                         type="text" 
+                         placeholder="输入测速 URL，例如 https://generativelanguage.googleapis.com"
+                         class="w-full pl-8 pr-3 py-1.5 rounded-lg bg-dark-800 border border-dark-700 text-xs text-white font-mono focus:border-brand-500 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed">
+                </div>
+                <div class="flex items-center gap-2 shrink-0">
+                  <div class="flex items-center gap-1 text-[11px] text-slate-400 bg-dark-800 px-2 py-1.5 rounded-lg border border-dark-700">
+                    <span>超时:</span>
+                    <input :value="getGroupTimeout(g.name)" 
+                           @input="setGroupTimeout(g.name, $event.target.value)"
+                           :disabled="groupTesting[g.name]"
+                           type="number" class="w-12 bg-transparent text-white font-mono text-center focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed" min="1000" max="15000" step="500">
+                    <span>ms</span>
+                  </div>
+
+                  <button @click="runGroupDelayTest(g.name)" :disabled="groupTesting[g.name]"
+                          class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-brand-500 hover:bg-brand-600 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-semibold shadow-md shadow-brand-500/20 transition-all shrink-0">
+                    <i data-lucide="zap" :class="['w-3.5 h-3.5', groupTesting[g.name] ? 'animate-spin' : '']"></i>
+                    <span>{{ groupTesting[g.name] ? '正在并发测速...' : '⚡ 开始组内测速' }}</span>
+                  </button>
+
+                  <button @click="toggleSortByDelay(g.name)" 
+                          :disabled="groupTesting[g.name]"
+                          :class="['flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs border transition-colors shrink-0 disabled:opacity-50 disabled:cursor-not-allowed',
+                                   sortByDelay[g.name] ? 'bg-indigo-500/20 border-indigo-500/50 text-indigo-300' : 'bg-dark-800 hover:bg-dark-700 border-dark-700 text-slate-400']"
+                          title="切换按延迟排序">
+                    <i data-lucide="arrow-down-up" class="w-3.5 h-3.5"></i>
+                    <span>{{ sortByDelay[g.name] ? '已按延迟升序' : '默认排序' }}</span>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Speed Test Results Stats (Conditional) -->
+              <div v-if="groupStats[g.name]" class="flex flex-wrap items-center gap-3 pt-2 border-t border-dark-800/80 text-[11px]">
+                <span class="text-slate-400 flex items-center gap-1">
+                  <i data-lucide="check-circle" class="w-3.5 h-3.5 text-emerald-400"></i>
+                  <span>正常响应: <strong class="text-emerald-400">{{ groupStats[g.name].aliveCount }}</strong> / {{ groupStats[g.name].total }}</span>
+                </span>
+                <span class="text-slate-400 flex items-center gap-1">
+                  <i data-lucide="zap" class="w-3.5 h-3.5 text-amber-400"></i>
+                  <span>最快响应: <strong class="text-amber-300 font-mono">{{ groupStats[g.name].fastest }}ms</strong></span>
+                </span>
+                <span class="text-slate-400 flex items-center gap-1">
+                  <i data-lucide="activity" class="w-3.5 h-3.5 text-brand-400"></i>
+                  <span>平均延迟: <strong class="text-brand-300 font-mono">{{ groupStats[g.name].avg }}ms</strong></span>
+                </span>
+                <span v-if="groupStats[g.name].deadCount > 0" class="text-rose-400 flex items-center gap-1">
+                  <i data-lucide="alert-circle" class="w-3.5 h-3.5"></i>
+                  <span>{{ groupStats[g.name].deadCount }} 个超时/不可用</span>
+                </span>
+                <span class="text-slate-500 ml-auto font-mono text-[10px]">
+                  测速时间: {{ groupStats[g.name].testedAt }}
+                </span>
+              </div>
+            </div>
+
+            <!-- Smart Node Management Tip -->
+            <div class="px-3.5 py-2.5 rounded-lg bg-dark-900/40 border border-dark-800 flex items-start gap-2.5 text-xs text-slate-400">
+              <i data-lucide="lightbulb" class="w-4 h-4 text-amber-400 shrink-0 mt-0.5"></i>
+              <div class="leading-relaxed">
+                <span class="text-slate-300 font-medium">节点选择与维护说明：</span>
+                测速后直接点击任意节点的 <span class="text-brand-400 font-semibold">[选用]</span> 按钮，即可将该代理组（及绑定它的独立端口）即刻切换到该节点。订阅定期拉取新节点时规则保持生效。
+              </div>
+            </div>
+
+            <!-- Group Nodes List -->
+            <div class="space-y-2">
+              <div class="text-xs font-semibold text-slate-400 flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                  <span>组内节点成员清单</span>
+                  <span class="text-[11px] px-2 py-0.2 rounded-full bg-dark-800 text-slate-400 font-mono">
+                    {{ ((g.all && g.all.length) || getMatchedNodesCount(g)) }} 个
+                  </span>
+                </div>
+                <button @click="toggleGroupExpand(g.name)" class="text-brand-400 hover:text-brand-300 text-xs font-medium flex items-center gap-1">
+                  <span>{{ expandedGroups[g.name] ? '收起部分' : `展开查看全部 (${((g.all && g.all.length) || getMatchedNodesCount(g))}) 个节点` }}</span>
+                  <i :data-lucide="expandedGroups[g.name] ? 'chevron-up' : 'chevron-down'" class="w-3.5 h-3.5"></i>
+                </button>
+              </div>
+
+              <!-- Nodes Grid -->
+              <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+                <!-- 无匹配节点时的空状态提示 -->
+                <div v-if="getGroupDisplayNodes(g, true).length === 0" class="col-span-full p-6 text-center text-xs text-slate-500 rounded-lg bg-dark-900/40 border border-dark-800">
+                  暂无匹配可用节点（请检查来源订阅是否已更新或调整过滤正则）
+                </div>
+
+                <div v-for="node in getGroupDisplayNodes(g, expandedGroups[g.name])" :key="node.name"
+                     :class="['flex items-center justify-between px-3 py-2.5 rounded-lg border text-xs transition-all',
+                              g.now === node.name 
+                                ? 'bg-brand-950/40 border-brand-500/50 shadow-md shadow-brand-500/10 ring-1 ring-brand-500/30' 
+                                : 'bg-dark-800 hover:bg-dark-750 border-dark-750']">
+                  
+                  <!-- Left: Node Status & Name -->
+                  <div class="flex items-center gap-2 truncate pr-2 flex-1 min-w-0">
+                    <span :class="['w-2 h-2 rounded-full shrink-0', 
+                                   g.now === node.name ? 'bg-brand-400 animate-pulse' :
+                                   node.delay > 0 ? 'bg-emerald-400' : 
+                                   node.delay === 0 ? 'bg-rose-500' : 'bg-slate-500']"></span>
+                    <span :class="['truncate font-medium', g.now === node.name ? 'text-brand-200 font-semibold' : 'text-slate-200']" 
+                          :title="node.name">
+                      {{ node.name }}
+                    </span>
+                  </div>
+
+                  <!-- Right: Latency Badge & Select Action -->
+                  <div class="flex items-center gap-2 shrink-0">
+                    <!-- Delay Badge -->
+                    <span :class="['text-[11px] font-mono px-2 py-0.5 rounded border flex items-center gap-1 font-semibold', getNodeDelayBadgeClass(node.delay)]">
+                      <span v-if="isNodeTesting(g.name, node.name)" class="inline-block animate-spin">⟳</span>
+                      <span>{{ getNodeDelayText(node.delay) }}</span>
+                    </span>
+
+                    <!-- Single Node Test Button -->
+                    <button @click="runSingleNodeDelayTest(g.name, node.name)" 
+                            :disabled="isNodeTesting(g.name, node.name)"
+                            class="p-1 rounded bg-dark-700/60 hover:bg-dark-700 text-slate-400 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            title="测此节点延迟">
+                      <i data-lucide="zap" class="w-3 h-3"></i>
+                    </button>
+
+                    <!-- Active Node / Select Button -->
+                    <div v-if="g.now === node.name" 
+                         class="px-2 py-0.5 rounded bg-brand-500/20 border border-brand-500/40 text-[10px] font-bold text-brand-300 shrink-0">
+                      当前选用
+                    </div>
+                    <button v-else-if="g.type === 'select'"
+                            @click="selectActiveNode(g.name, node.name)"
+                            :disabled="selectingNode[g.name + ':' + node.name]"
+                            class="px-2 py-0.5 rounded bg-dark-700 hover:bg-brand-600 hover:text-white text-slate-300 border border-dark-600 text-[11px] font-medium transition-colors shrink-0 disabled:opacity-50 disabled:cursor-not-allowed">
+                      {{ selectingNode[g.name + ':' + node.name] ? '切换中...' : '选用' }}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+
+      <!-- ========================================== -->
+      <!-- TAB 3: 多订阅池管理 (SUBSCRIPTIONS) -->
+      <!-- ========================================== -->
+      <div v-show="currentTab === 'subscriptions'" class="space-y-4">
+        <div class="flex items-center justify-between">
+          <div>
+            <h2 class="text-base font-bold text-white">机场多订阅聚合池 (Proxy Providers)</h2>
+            <p class="text-xs text-slate-400 mt-0.5">管理多个机场订阅链接，自动添加节点前缀避免重名冲突，实时跟踪节点拉取情况。</p>
+          </div>
+          <button @click="openSubModal()" class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-brand-500/10 hover:bg-brand-500/20 text-brand-400 border border-brand-500/30 text-xs font-semibold transition-colors">
+            <i data-lucide="plus" class="w-3.5 h-3.5"></i>
+            <span>添加订阅源</span>
+          </button>
+        </div>
+
+        <!-- 无订阅源时的空状态 -->
+        <div v-if="Object.keys(subscriptions).length === 0 && !loading" class="rounded-xl border border-dashed border-dark-750 bg-dark-850/40 p-8 text-center space-y-2">
+          <div class="w-10 h-10 rounded-xl bg-dark-800 mx-auto flex items-center justify-center text-slate-400">
+            <i data-lucide="cloud-download" class="w-5 h-5"></i>
+          </div>
+          <div class="text-sm font-bold text-slate-300">暂无聚合订阅源</div>
+          <div class="text-xs text-slate-500 max-w-md mx-auto leading-relaxed">点击右上角「添加订阅源」，录入机场订阅 URL 聚合管理多订阅节点。</div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div v-for="(sub, id) in subscriptions" :key="id" class="rounded-xl border border-dark-700 bg-dark-850 p-5 space-y-4 relative">
+            <div class="flex items-start justify-between">
+              <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-xl bg-brand-500/10 border border-brand-500/20 flex items-center justify-center text-brand-400 font-bold font-mono">
+                  {{ id.toUpperCase() }}
+                </div>
+                <div>
+                  <h3 class="font-bold text-white text-base">{{ sub.name || id }}</h3>
+                  <div class="text-xs text-slate-400 font-mono mt-0.5">前缀: {{ sub.prefix || '无' }}</div>
+                </div>
+              </div>
+              <div class="flex items-center gap-1">
+                <button @click="openSubModal(id, sub)" :disabled="deletingSub[id] || subRefreshing[id]" class="p-1 text-slate-400 hover:text-white rounded disabled:opacity-50 disabled:cursor-not-allowed" title="编辑订阅">
+                  <i data-lucide="edit-2" class="w-3.5 h-3.5"></i>
+                </button>
+                <button @click="deleteSub(id)" :disabled="deletingSub[id] || subRefreshing[id]" class="p-1 text-slate-400 hover:text-rose-400 rounded disabled:opacity-50 disabled:cursor-not-allowed" title="删除订阅">
+                  <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                </button>
+              </div>
+            </div>
+
+            <div class="space-y-2 text-xs">
+              <div class="flex items-center justify-between">
+                <span class="text-slate-400">实时节点数:</span>
+                <span class="font-semibold text-emerald-400 text-sm">{{ sub.nodeCount || 0 }} 个节点</span>
+              </div>
+              <div class="flex items-center justify-between">
+                <span class="text-slate-400">上次更新:</span>
+                <span class="text-slate-300 font-mono text-[11px]">{{ formatTime(sub.updatedAt) }}</span>
+              </div>
+              <div class="truncate text-slate-500 font-mono text-[10px]" :title="sub.url">
+                {{ sub.url }}
+              </div>
+            </div>
+
+            <div class="pt-3 border-t border-dark-800 flex items-center justify-between">
+              <button @click="refreshSub(id)" :disabled="subRefreshing[id] || deletingSub[id]" 
+                      class="w-full flex items-center justify-center gap-1.5 py-1.5 px-3 rounded-lg bg-dark-800 hover:bg-dark-700 text-xs font-semibold text-slate-300 border border-dark-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                <i data-lucide="refresh-cw" :class="['w-3.5 h-3.5', subRefreshing[id] ? 'animate-spin text-brand-400' : '']"></i>
+                <span>{{ subRefreshing[id] ? '正在从机场拉取...' : '在线刷新节点' }}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ========================================== -->
+      <!-- TAB 4: 诊断与历史备份 (DIAGNOSTICS & BACKUPS) -->
+      <!-- ========================================== -->
+      <div v-show="currentTab === 'backups'" class="space-y-4">
+        <div>
+          <h2 class="text-base font-bold text-white">配置诊断与历史快照回滚</h2>
+          <p class="text-xs text-slate-400 mt-0.5">每次写入配置前均会自动备份 Clash Verge 全局 Script.js。遇异常时可一键回滚恢复。</p>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <!-- Backups List -->
+          <div class="lg:col-span-2 rounded-xl border border-dark-700 bg-dark-850 p-5 space-y-4">
+            <h3 class="text-sm font-bold text-slate-200 flex items-center gap-2">
+              <i data-lucide="history" class="w-4 h-4 text-brand-400"></i>
+              历史备份快照清单
+            </h3>
+            <div class="space-y-2 max-h-96 overflow-y-auto pr-1">
+              <div v-for="b in backups" :key="b.file" class="flex items-center justify-between p-3 rounded-lg bg-dark-800 border border-dark-750 text-xs">
+                <div class="space-y-1">
+                  <div class="font-mono text-slate-200 font-semibold">{{ b.file }}</div>
+                  <div class="text-[11px] text-slate-400 flex items-center gap-3">
+                    <span>时间: {{ b.time }}</span>
+                    <span>大小: {{ b.size }}</span>
+                  </div>
+                </div>
+                <button @click="restoreBackup(b.file)" :disabled="restoring || configBusy" 
+                        class="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 font-semibold text-xs transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                  <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i>
+                  <span>{{ restoring ? '正在回滚...' : '回滚此版本' }}</span>
+                </button>
+              </div>
+              <div v-if="backups.length === 0" class="text-center py-8 text-slate-500 text-xs">
+                暂无历史备份
+              </div>
+            </div>
+          </div>
+
+          <!-- Quick Latency Port Test -->
+          <div class="rounded-xl border border-dark-700 bg-dark-850 p-5 space-y-4">
+            <h3 class="text-sm font-bold text-slate-200 flex items-center gap-2">
+              <i data-lucide="activity" class="w-4 h-4 text-emerald-400"></i>
+              端口连通性实时检测
+            </h3>
+            <div class="space-y-3">
+              <button @click="testAllPorts" :disabled="testingPorts"
+                      class="w-full flex items-center justify-center gap-2 py-2 px-4 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed">
+                <i data-lucide="play" :class="['w-3.5 h-3.5', testingPorts ? 'animate-spin' : '']"></i>
+                <span>{{ testingPorts ? '正在测试端口...' : '测试所有端口连通性' }}</span>
+              </button>
+
+              <div class="space-y-2 text-xs">
+                <div v-if="portTestResults.length === 0 && !testingPorts" class="text-center py-6 text-slate-500 text-xs">
+                  点击上方按钮开始检测本地代理端口 (127.0.0.1) 连通状态
+                </div>
+                <div v-for="res in portTestResults" :key="res.port" class="flex items-center justify-between p-2.5 rounded bg-dark-800 border border-dark-750 font-mono">
+                  <span>127.0.0.1:{{ res.port }}</span>
+                  <span :class="res.ok ? 'text-emerald-400' : 'text-rose-400'" class="font-semibold flex items-center gap-1">
+                    <span :class="['w-1.5 h-1.5 rounded-full', res.ok ? 'bg-emerald-400' : 'bg-rose-400']"></span>
+                    {{ res.ok ? `OK (${res.latency}ms)` : '失败' }}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- Modal: 新增/编辑端口映射 (400/409 保留表单) -->
+    <div v-if="listenerModal.open" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm" @click.self="!savingListener && (listenerModal.open = false)">
+      <div class="bg-dark-850 border border-dark-700 rounded-2xl max-w-md w-full p-6 space-y-5 shadow-2xl">
+        <div class="flex items-center justify-between border-b border-dark-800 pb-3">
+          <h3 class="text-base font-bold text-white">{{ listenerModal.isEdit ? '编辑端口映射' : '新建应用独立端口' }}</h3>
+          <button @click="listenerModal.open = false" :disabled="savingListener" class="text-slate-400 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed"><i data-lucide="x" class="w-5 h-5"></i></button>
+        </div>
+
+        <div class="space-y-4 text-xs">
+          <div>
+            <label class="block font-semibold text-slate-300 mb-1">监听端口号 (Port)</label>
+            <input v-model.number="listenerModal.form.port" :disabled="listenerModal.isEdit || savingListener" type="number" placeholder="7891" 
+                   class="w-full px-3 py-2 rounded-lg bg-dark-800 border border-dark-700 text-white font-mono focus:border-brand-500 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed">
+            <span v-if="listenerModal.isEdit" class="text-[10px] text-amber-400 mt-1 block">编辑时不能修改名称/ID，如需改名请删除后新建</span>
+            <span v-else class="text-[10px] text-slate-500 mt-1 block">建议范围: 7891 - 7899，避免与 7890 冲突</span>
+          </div>
+          <div>
+            <label class="block font-semibold text-slate-300 mb-1">标识名称 (Name)</label>
+            <input v-model="listenerModal.form.name" :disabled="listenerModal.isEdit || savingListener" type="text" placeholder="agy-gemini" 
+                   class="w-full px-3 py-2 rounded-lg bg-dark-800 border border-dark-700 text-white font-mono focus:border-brand-500 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed">
+            <span v-if="listenerModal.isEdit" class="text-[10px] text-amber-400 mt-1 block">编辑时不能修改名称/ID，如需改名请删除后新建</span>
+          </div>
+          <div>
+            <label class="block font-semibold text-slate-300 mb-1">直连目标代理组 (Target Proxy Group)</label>
+            <select v-model="listenerModal.form.proxy" :disabled="savingListener" class="w-full px-3 py-2 rounded-lg bg-dark-800 border border-dark-700 text-white focus:border-brand-500 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed">
+              <option v-for="g in groups" :key="g.name" :value="g.name">{{ g.name }}</option>
+              <option value="💸 ChatGPT-Gemini-XAI-Perplexity">💸 ChatGPT-Gemini-XAI-Perplexity</option>
+              <option value="💵 Claude">💵 Claude</option>
+              <option value="⚙️ 节点选择">⚙️ 节点选择</option>
+            </select>
+          </div>
+          <div class="flex items-center gap-2 pt-1">
+            <input v-model="listenerModal.form.udp" :disabled="savingListener" type="checkbox" id="udp-cb" class="rounded bg-dark-800 border-dark-700 text-brand-500 focus:ring-0 disabled:opacity-50">
+            <label for="udp-cb" class="text-slate-300 font-semibold cursor-pointer">启用 UDP 流量转发 (推荐开启)</label>
+          </div>
+        </div>
+
+        <div class="flex items-center justify-end gap-3 pt-3 border-t border-dark-800">
+          <button @click="listenerModal.open = false" :disabled="savingListener" class="px-4 py-2 rounded-lg bg-dark-800 hover:bg-dark-700 text-slate-300 text-xs font-semibold disabled:opacity-50 disabled:cursor-not-allowed">取消</button>
+          <button @click="saveListener" :disabled="savingListener" class="px-4 py-2 rounded-lg bg-brand-500 hover:bg-brand-600 text-white text-xs font-semibold disabled:opacity-50 disabled:cursor-not-allowed">
+            <span>{{ savingListener ? '保存中...' : '保存端口配置' }}</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal: 新增/编辑代理组 (带来源订阅筛选与实时预览) -->
+    <div v-if="groupModal.open" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm" @click.self="!savingGroup && (groupModal.open = false)">
+      <div class="bg-dark-850 border border-dark-700 rounded-2xl max-w-lg w-full p-6 space-y-4 shadow-2xl">
+        <div class="flex items-center justify-between border-b border-dark-800 pb-3">
+          <h3 class="text-base font-bold text-white">{{ groupModal.isEdit ? '编辑代理组策略' : '新建代理组' }}</h3>
+          <button @click="groupModal.open = false" :disabled="savingGroup" class="text-slate-400 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed"><i data-lucide="x" class="w-5 h-5"></i></button>
+        </div>
+
+        <div class="space-y-3.5 text-xs">
+          <div>
+            <label class="block font-semibold text-slate-300 mb-1">代理组名称 (Group Name)</label>
+            <input v-model="groupModal.form.name" :disabled="groupModal.isEdit || savingGroup" type="text" placeholder="AGY Gemini" 
+                   class="w-full px-3 py-2 rounded-lg bg-dark-800 border border-dark-700 text-white focus:border-brand-500 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed">
+            <span v-if="groupModal.isEdit" class="text-[10px] text-amber-400 mt-1 block">编辑时不能修改名称/ID，如需改名请删除后新建</span>
+          </div>
+          <div>
+            <label class="block font-semibold text-slate-300 mb-1">组策略类型 (Type)</label>
+            <select v-model="groupModal.form.type" :disabled="savingGroup" class="w-full px-3 py-2 rounded-lg bg-dark-800 border border-dark-700 text-white focus:border-brand-500 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed">
+              <option value="select">手动选择 (select)</option>
+              <option value="url-test">自动测速选优 (url-test)</option>
+              <option value="fallback">故障自动转移 (fallback)</option>
+            </select>
+          </div>
+          <div>
+            <label class="block font-semibold text-slate-300 mb-1">包含的订阅源 (Providers)</label>
+            <div class="grid grid-cols-2 gap-2 pt-1 max-h-32 overflow-y-auto">
+              <span v-if="Object.keys(subscriptions).length === 0" class="col-span-2 text-slate-500 text-[11px] italic">暂无订阅源，请先在「多订阅池」中添加订阅</span>
+              <label v-for="(sub, id) in subscriptions" :key="id" class="flex items-center gap-2 p-2 rounded bg-dark-800 border border-dark-750 cursor-pointer">
+                <input type="checkbox" :value="id" v-model="groupModal.form.use" :disabled="savingGroup" class="rounded bg-dark-700 border-dark-600 text-brand-500 focus:ring-0 disabled:opacity-50">
+                <span class="text-slate-200 truncate">{{ sub.name || id }}</span>
+              </label>
+            </div>
+            <span v-if="(!groupModal.form.use || groupModal.form.use.length === 0) && !groupModal.form.includeActiveProfile" class="text-[11px] text-rose-400 mt-1 block">
+              ⚠️ 请至少勾选一个订阅源或勾选合并活动配置
+            </span>
+          </div>
+          <div>
+            <label class="block font-semibold text-slate-300 mb-1">节点筛选正则表达式 (Filter Regex)</label>
+            <input v-model="groupModal.form.filter" :disabled="savingGroup" type="text" placeholder="(?i)(🇺🇸|西美|美|US)" 
+                   class="w-full px-3 py-2 rounded-lg bg-dark-800 border border-dark-700 text-white font-mono focus:border-brand-500 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed">
+          </div>
+          <div class="flex items-center gap-2 pt-1">
+            <input v-model="groupModal.form.includeActiveProfile" :disabled="savingGroup" type="checkbox" id="active-p-cb" class="rounded bg-dark-800 border-dark-700 text-brand-500 focus:ring-0 disabled:opacity-50">
+            <label for="active-p-cb" class="text-slate-300 font-semibold cursor-pointer">合并 Clash 当前活动配置中的节点</label>
+          </div>
+
+          <!-- 节点匹配实时预览器 (根据 group.use 严格筛选) -->
+          <div class="p-3 rounded-lg bg-dark-900 border border-dark-800 space-y-2">
+            <div class="flex items-center justify-between text-xs">
+              <span class="text-slate-400 font-medium">所选订阅池匹配预览:</span>
+              <span class="font-mono text-brand-400 font-semibold">{{ getMatchedNodes(groupModal.form, 0).length }} 个订阅节点命中</span>
+            </div>
+            <div v-if="groupModal.form.includeActiveProfile" class="text-[11px] text-amber-400/90 leading-tight">
+              ℹ️ 活动配置中定义的直属节点将在 Clash Verge 重新生成配置时由 Script.js 动态合并（静态列表仅展示已选订阅池节点）。
+            </div>
+            <div class="flex flex-wrap gap-1 max-h-24 overflow-y-auto">
+              <span v-for="node in getMatchedNodes(groupModal.form, 8)" :key="node.name"
+                    class="text-[10px] px-1.5 py-0.5 rounded bg-dark-800 text-slate-300 font-mono truncate max-w-[140px]" :title="node.name">
+                {{ node.name }}
+              </span>
+              <span v-if="getMatchedNodes(groupModal.form, 0).length > 8" class="text-[10px] text-slate-500 py-0.5">
+                + 更多 {{ getMatchedNodes(groupModal.form, 0).length - 8 }} 个...
+              </span>
+              <span v-if="getMatchedNodes(groupModal.form, 0).length === 0" class="text-[11px] text-slate-500 italic">
+                暂无命中节点（请检查订阅勾选或过滤正则）
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <div class="flex items-center justify-end gap-3 pt-3 border-t border-dark-800">
+          <button @click="groupModal.open = false" :disabled="savingGroup" class="px-4 py-2 rounded-lg bg-dark-800 hover:bg-dark-700 text-slate-300 text-xs font-semibold disabled:opacity-50 disabled:cursor-not-allowed">取消</button>
+          <button @click="saveGroup" :disabled="savingGroup" class="px-4 py-2 rounded-lg bg-brand-500 hover:bg-brand-600 text-white text-xs font-semibold disabled:opacity-50 disabled:cursor-not-allowed">
+            <span>{{ savingGroup ? '保存中...' : '保存代理组策略' }}</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal: 新增/编辑订阅源 (400 保留表单) -->
+    <div v-if="subModal.open" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm" @click.self="!savingSub && (subModal.open = false)">
+      <div class="bg-dark-850 border border-dark-700 rounded-2xl max-w-md w-full p-6 space-y-5 shadow-2xl">
+        <div class="flex items-center justify-between border-b border-dark-800 pb-3">
+          <h3 class="text-base font-bold text-white">{{ subModal.isEdit ? '编辑订阅源' : '添加机场订阅源' }}</h3>
+          <button @click="subModal.open = false" :disabled="savingSub" class="text-slate-400 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed"><i data-lucide="x" class="w-5 h-5"></i></button>
+        </div>
+
+        <div class="space-y-4 text-xs">
+          <div>
+            <label class="block font-semibold text-slate-300 mb-1">订阅唯一 ID (例如 p2, p3, p4)</label>
+            <input v-model="subModal.form.id" :disabled="subModal.isEdit || savingSub" type="text" placeholder="p4" 
+                   class="w-full px-3 py-2 rounded-lg bg-dark-800 border border-dark-700 text-white font-mono focus:border-brand-500 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed">
+            <span v-if="subModal.isEdit" class="text-[10px] text-amber-400 mt-1 block">编辑时不能修改名称/ID，如需改名请删除后新建</span>
+          </div>
+          <div>
+            <label class="block font-semibold text-slate-300 mb-1">机场名称 (Name)</label>
+            <input v-model="subModal.form.name" :disabled="savingSub" type="text" placeholder="SakuraCat" 
+                   class="w-full px-3 py-2 rounded-lg bg-dark-800 border border-dark-700 text-white focus:border-brand-500 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed">
+          </div>
+          <div>
+            <label class="block font-semibold text-slate-300 mb-1">订阅链接 (Subscription URL)</label>
+            <input v-model="subModal.form.url" :disabled="savingSub" type="text" placeholder="https://..." 
+                   class="w-full px-3 py-2 rounded-lg bg-dark-800 border border-dark-700 text-white font-mono focus:border-brand-500 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed">
+          </div>
+          <div>
+            <label class="block font-semibold text-slate-300 mb-1">节点名称前缀 (Prefix)</label>
+            <input v-model="subModal.form.prefix" :disabled="savingSub" type="text" placeholder="Sakura |" 
+                   class="w-full px-3 py-2 rounded-lg bg-dark-800 border border-dark-700 text-white font-mono focus:border-brand-500 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed">
+          </div>
+        </div>
+
+        <div class="flex items-center justify-end gap-3 pt-3 border-t border-dark-800">
+          <button @click="subModal.open = false" :disabled="savingSub" class="px-4 py-2 rounded-lg bg-dark-800 hover:bg-dark-700 text-slate-300 text-xs font-semibold disabled:opacity-50 disabled:cursor-not-allowed">取消</button>
+          <button @click="saveSub" :disabled="savingSub" class="px-4 py-2 rounded-lg bg-brand-500 hover:bg-brand-600 text-white text-xs font-semibold disabled:opacity-50 disabled:cursor-not-allowed">
+            <span>{{ savingSub ? '保存中...' : '保存订阅源' }}</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

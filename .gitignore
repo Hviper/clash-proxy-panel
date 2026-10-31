@@ -1,0 +1,18 @@
+node_modules/
+release/
+logs/
+
+# 本地运行时配置，含订阅 URL 与 token，绝不入库
+data/
+panel.log
+
+# Electron / 打包产物
+*.asar
+dist/
+out/
+
+# 系统 / 编辑器
+.DS_Store
+*.log
+.idea/
+.vscode/

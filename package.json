@@ -1,0 +1,52 @@
+{
+  "name": "clash-proxy-panel",
+  "version": "1.0.0",
+  "description": "Clash Verge / Mihomo 本地代理配置桌面面板",
+  "main": "electron/main.js",
+  "scripts": {
+    "start": "electron .",
+    "start:web": "node server.js",
+    "test": "node --test",
+    "build:assets": "node scripts/build-assets.js",
+    "build:mac": "npm run build:assets && electron-builder --mac --arm64 --dir --config.electronDist=node_modules/electron/dist",
+    "build:dmg": "npm run build:assets && electron-builder --mac dmg --arm64 --config.electronDist=node_modules/electron/dist"
+  },
+  "keywords": ["clash", "mihomo", "proxy", "panel"],
+  "license": "MIT",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "lucide": "^1.66.0",
+    "vue": "^3.5.44"
+  },
+  "devDependencies": {
+    "electron": "^45.2.1",
+    "electron-builder": "^26.18.0",
+    "tailwindcss": "^3.4.19"
+  },
+  "build": {
+    "appId": "com.agy.clash-proxy-panel",
+    "productName": "Clash Proxy Panel",
+    "asar": true,
+    "directories": { "output": "release" },
+    "files": [
+      "electron/**/*",
+      "src/**/*",
+      "public/**/*",
+      "package.json",
+      "node_modules/**/*",
+      "!data/**/*",
+      "!logs/**/*",
+      "!test/**/*",
+      "!test-support/**/*",
+      "!panel.log",
+      "!server.js",
+      "!start.sh"
+    ],
+    "mac": {
+      "target": ["dir"],
+      "category": "public.app-category.utilities",
+      "identity": null
+    }
+  }
+}
